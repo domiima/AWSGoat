@@ -58,7 +58,11 @@ jobs:
 
       - name: Terraform Init
         working-directory: modules/${{ github.event.inputs.module }}
-        run: terraform init
+        run: terraform init -upgrade
+
+      - name: Terraform Validate
+        working-directory: modules/${{ github.event.inputs.module }}
+        run: terraform validate
 
       - name: Terraform Plan
         working-directory: modules/${{ github.event.inputs.module }}
