@@ -22,12 +22,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ✅ Check: verifica che i secrets ESISTANO (senza stamparli)
+      - name: Check secrets are present (length only)
+        shell: bash
+        env:
+          AKID: ${{ secrets.ACCESS_KEY_ID }}
+          SAK:  ${{ secrets.SECRET_ACCESS_KEY }}
+        run: |
+          if [ -z "$AKID" ]; then echo "Missing secret: ACCESS_KEY_ID" && exit 1; fi
+          if [ -z "$SAK"  ]; then echo "Missing secret: SECRET_ACCESS_KEY" && exit 1; fi
+          echo "ACCESS_KEY_ID length: ${#AKID}"
+          echo "SECRET_ACCESS_KEY length: ${#SAK}"
+
       # ✅ Configura credenziali AWS nel runner (export automatico delle env var standard)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ secrets.ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       # (debug sicuro) Verifica che le env var esistano SENZA stamparle
@@ -54,4 +66,3 @@ jobs:
       - name: Terraform Outputs
         working-directory: modules/${{ github.event.inputs.module }}
         run: terraform output
-
