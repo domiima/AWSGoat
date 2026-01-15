@@ -22,6 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ✅ Installa Terraform nel runner
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
       # ✅ Check: verifica che i secrets ESISTANO (senza stamparli)
       - name: Check secrets are present (length only)
         shell: bash
@@ -42,14 +48,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # (debug sicuro) Verifica che le env var esistano SENZA stamparle
-      - name: Debug AWS env presence (no secrets printed)
+      # (debug utile) Mostra la versione di terraform e verifica AWS identity (non stampa segreti)
+      - name: Debug tools and identity
         shell: bash
         run: |
-          if [ -z "${AWS_ACCESS_KEY_ID}" ]; then echo "AWS_ACCESS_KEY_ID missing" && exit 1; fi
-          if [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then echo "AWS_SECRET_ACCESS_KEY missing" && exit 1; fi
-          if [ -z "${AWS_REGION}" ]; then echo "AWS_REGION missing" && exit 1; fi
-          echo "AWS credential env vars are present."
+          terraform -version
+          aws --version
+          aws sts get-caller-identity
 
       - name: Terraform Init
         working-directory: modules/${{ github.event.inputs.module }}
