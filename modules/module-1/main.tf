@@ -5,17 +5,6 @@ terraform {
       version = "~> 5.24.0"
     }
   }
-
-  # Remote state for GitHub Actions (persistent)
-  # NOTE: backend blocks cannot use variables or data sources.
-  backend "s3" {
-    bucket         = "do-not-delete-awsgoat-state-files-220551387025"
-    key            = "modules/module-1/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "terraform-locks"
-    encrypt        = true
-  }
-
 }
 provider "aws" {
   region = "us-east-1"
@@ -152,7 +141,7 @@ resource "aws_api_gateway_integration_response" "endpoint" {
 }
 
 resource "aws_lambda_permission" "apigw_ba" {
-  statement_id  = "AllowAPIGatewayInvoke"
+  statement_id  = "AllowAPIGatewayInvokeReact"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.react_lambda_app.function_name
   principal     = "apigateway.amazonaws.com"
@@ -3171,7 +3160,7 @@ resource "aws_iam_policy" "lambda_data_policies" {
 
 
 resource "aws_lambda_permission" "apigw_ba_python" {
-  statement_id  = "AllowAPIGatewayInvoke"
+  statement_id  = "AllowAPIGatewayInvokeData"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.lambda_ba_data.function_name
   principal     = "apigateway.amazonaws.com"
@@ -3426,6 +3415,16 @@ resource "aws_s3_object" "upload_temp_object_2" {
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
   depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react, aws_s3_bucket_acl.bucket_temp]
 }
+/* Creating a S3 Bucket for Terraform state file upload. */
+resource "aws_s3_bucket" "bucket_tf_files" {
+  bucket        = "do-not-delete-awsgoat-state-files-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+  tags = {
+    Name        = "Do not delete Bucket"
+    Environment = "Dev"
+  }
+}
+
 
 # VPC to deploy web app
 
@@ -3464,7 +3463,8 @@ resource "aws_route_table_association" "goat_public_rta" {
   subnet_id      = aws_subnet.goat_subnet.id
   route_table_id = aws_route_table.goat_rt.id
 }
-
+  replace_existing_association = true
+}
 resource "aws_security_group" "goat_sg" {
   name        = "AWS_GOAT_sg"
   description = "AWS_GOAT_sg"
