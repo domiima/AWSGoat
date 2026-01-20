@@ -5,6 +5,17 @@ terraform {
       version = "~> 5.24.0"
     }
   }
+
+  # Remote state for GitHub Actions (persistent)
+  # NOTE: backend blocks cannot use variables or data sources.
+  backend "s3" {
+    bucket         = "do-not-delete-awsgoat-state-files-220551387025"
+    key            = "modules/module-1/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+
 }
 provider "aws" {
   region = "us-east-1"
@@ -3415,16 +3426,6 @@ resource "aws_s3_object" "upload_temp_object_2" {
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
   depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react, aws_s3_bucket_acl.bucket_temp]
 }
-/* Creating a S3 Bucket for Terraform state file upload. */
-resource "aws_s3_bucket" "bucket_tf_files" {
-  bucket        = "do-not-delete-awsgoat-state-files-${data.aws_caller_identity.current.account_id}"
-  force_destroy = true
-  tags = {
-    Name        = "Do not delete Bucket"
-    Environment = "Dev"
-  }
-}
-
 
 # VPC to deploy web app
 
