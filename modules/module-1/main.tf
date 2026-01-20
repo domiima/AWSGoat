@@ -5,10 +5,14 @@ terraform {
       version = "~> 5.24.0"
     }
   }
+
+  backend "s3" {
+    bucket = "tfstate-awsgoat-220551387025"
+    key    = "modules/module-1/terraform.tfstate"
+    region = "us-east-1"
+  }
 }
-provider "aws" {
-  region = "us-east-1"
-}
+
 
 data "aws_caller_identity" "current" {}
 
