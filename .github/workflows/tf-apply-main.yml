@@ -45,27 +45,19 @@ jobs:
         run: |
           echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
 
-      - name: Check previous AWSGoat Deployment
-        id: check
-        run: |
-          echo "${{ env.ACCOUNT_ID }}"
-          aws s3api head-object --bucket "do-not-delete-awsgoat-state-files-${{ env.ACCOUNT_ID }}" --key "terraform.tfstate"
-        continue-on-error: true
-
-      - name: Exit if previous deployment exists
-        if: steps.check.outcome == 'success'
-        run: |
-          echo "A Previous AWSGoat deployment exists, run the Terraform Destroy Action"
-          exit 1
-
       - name: Terraform Init
         run: |
-            cd "modules/${{ github.event.inputs.module }}"
-            terraform init -reconfigure \
-              -backend-config="bucket=tfstate-awsgoat-${{ env.ACCOUNT_ID }}" \
-              -backend-config="key=${{ github.event.inputs.module }}/terraform.tfstate" \
-              -backend-config="region=${{ env.AWS_REGION }}"
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform init -reconfigure \
+            -backend-config="bucket=tfstate-awsgoat-${{ env.ACCOUNT_ID }}" \
+            -backend-config="key=${{ github.event.inputs.module }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks"
 
+      - name: Terraform Validate
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform validate
 
       - uses: actions/setup-python@v5
         with:
@@ -86,24 +78,19 @@ jobs:
           cd "modules/${{ github.event.inputs.module }}"
           terraform apply -auto-approve -input=false
 
-      # (Opzionale ma utile) mostra tutti gli output, così vedi cosa c'è nello state
       - name: Terraform Outputs (all)
         run: |
           cd "modules/${{ github.event.inputs.module }}"
           terraform output || true
 
-      # QUI ottieni l'URL in chiaro (solo valore)
       - name: Application URL (raw)
         run: |
           cd "modules/${{ github.event.inputs.module }}"
           echo "WEB_APP_URL=$(terraform output -raw ad_Target_URL)" >> $GITHUB_ENV
           echo "Web app URL: $(terraform output -raw ad_Target_URL)"
 
-      # Mostra l'URL anche nel Summary del job (comodo da copiare)
       - name: Write URL to Job Summary
         run: |
           echo "## AWSGoat Web App URL" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`${{ env.WEB_APP_URL }}\`" >> $GITHUB_STEP_SUMMARY
-
-
