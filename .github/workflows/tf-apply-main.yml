@@ -6,9 +6,9 @@ on:
       module:
         type: choice
         description: "Select which module to deploy"
-        options: 
-        - module-1
-        - module-2
+        options:
+          - module-1
+          - module-2
         required: true
 
 permissions: write-all
@@ -18,6 +18,7 @@ jobs:
     name: 'Terraform'
     runs-on: ubuntu-latest
     environment: production
+
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SECRET_ACCESS_KEY }}
@@ -28,60 +29,77 @@ jobs:
         shell: bash
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.10.5
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.5
 
-    - name: Verify AWS credentials
-      run: aws sts get-caller-identity
+      - name: Verify AWS credentials
+        run: aws sts get-caller-identity
 
-    - name: Set Account ID
-      id: account
-      run: |
-        echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
-
-    - name: Check previous AWSGoat Deployment
-      id: check
-      run: |
-        echo "${{ env.ACCOUNT_ID }}"
-        aws s3api head-object --bucket do-not-delete-awsgoat-state-files-${{ env.ACCOUNT_ID }} --key terraform.tfstate
-      continue-on-error: true
-
-    - name: Exit if previous deployment exists
-      if: steps.check.outcome == 'success'
-      run: |
-        echo "A Previous AWSGoat deployment exists, run the Terraform Destroy Action"
-        exit 1
-
-    - name: Terraform Init
-      run: |
-        cd modules/${{ github.event.inputs.module }}
-        terraform init
-
-    - uses: actions/setup-python@v5
-      with:
-        python-version: 3
-
-    - name: install
-      run: |
-        pip install boto3
-
-    - name: Terraform Plan
-      id: plan
-      run: |
-        cd modules/${{ github.event.inputs.module }}
-        terraform plan -input=false
-
-    - name: Terraform Apply
-      run: |
-        cd modules/${{ github.event.inputs.module }}
-
-    - name: Application URL (raw)
+      - name: Set Account ID
+        id: account
         run: |
-          cd modules/${{ github.event.inputs.module }}
-          terraform output -raw ad_Target_URL
+          echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
+
+      - name: Check previous AWSGoat Deployment
+        id: check
+        run: |
+          echo "${{ env.ACCOUNT_ID }}"
+          aws s3api head-object --bucket "do-not-delete-awsgoat-state-files-${{ env.ACCOUNT_ID }}" --key "terraform.tfstate"
+        continue-on-error: true
+
+      - name: Exit if previous deployment exists
+        if: steps.check.outcome == 'success'
+        run: |
+          echo "A Previous AWSGoat deployment exists, run the Terraform Destroy Action"
+          exit 1
+
+      - name: Terraform Init
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform init
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3
+
+      - name: install
+        run: |
+          pip install boto3
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform plan -input=false
+
+      - name: Terraform Apply
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform apply -auto-approve -input=false
+
+      # (Opzionale ma utile) mostra tutti gli output, così vedi cosa c'è nello state
+      - name: Terraform Outputs (all)
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          terraform output || true
+
+      # QUI ottieni l'URL in chiaro (solo valore)
+      - name: Application URL (raw)
+        run: |
+          cd "modules/${{ github.event.inputs.module }}"
+          echo "WEB_APP_URL=$(terraform output -raw ad_Target_URL)" >> $GITHUB_ENV
+          echo "Web app URL: $(terraform output -raw ad_Target_URL)"
+
+      # Mostra l'URL anche nel Summary del job (comodo da copiare)
+      - name: Write URL to Job Summary
+        run: |
+          echo "## AWSGoat Web App URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`${{ env.WEB_APP_URL }}\`" >> $GITHUB_STEP_SUMMARY
+
 
