@@ -14,21 +14,27 @@ on:
 permissions:
   contents: read
 
+# Evita 2 apply contemporanei sullo stesso modulo
+concurrency:
+  group: terraform-${{ github.event.inputs.module }}
+  cancel-in-progress: false
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: "true"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ✅ Installa Terraform nel runner
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # ✅ Check: verifica che i secrets ESISTANO (senza stamparli)
       - name: Check secrets are present (length only)
         shell: bash
         env:
@@ -40,7 +46,6 @@ jobs:
           echo "ACCESS_KEY_ID length: ${#AKID}"
           echo "SECRET_ACCESS_KEY length: ${#SAK}"
 
-      # ✅ Configura credenziali AWS nel runner (export automatico delle env var standard)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -48,7 +53,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # (debug utile) Mostra la versione di terraform e verifica AWS identity (non stampa segreti)
       - name: Debug tools and identity
         shell: bash
         run: |
@@ -56,9 +60,16 @@ jobs:
           aws --version
           aws sts get-caller-identity
 
-      - name: Terraform Init
+      # ✅ IMPORTANTISSIMO: init con REMOTE STATE su S3 (persistente)
+      - name: Terraform Init (REMOTE STATE)
         working-directory: modules/${{ github.event.inputs.module }}
-        run: terraform init -upgrade
+        shell: bash
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=do-not-delete-awsgoat-state-files-220551387025" \
+            -backend-config="key=${{ github.event.inputs.module }}/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="dynamodb_table=terraform-locks"
 
       - name: Terraform Validate
         working-directory: modules/${{ github.event.inputs.module }}
@@ -66,11 +77,13 @@ jobs:
 
       - name: Terraform Plan
         working-directory: modules/${{ github.event.inputs.module }}
-        run: terraform plan
+        shell: bash
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
         working-directory: modules/${{ github.event.inputs.module }}
-        run: terraform apply -auto-approve
+        shell: bash
+        run: terraform apply -auto-approve tfplan
 
       - name: Terraform Outputs
         working-directory: modules/${{ github.event.inputs.module }}
