@@ -60,8 +60,12 @@ jobs:
 
       - name: Terraform Init
         run: |
-          cd "modules/${{ github.event.inputs.module }}"
-          terraform init
+            cd "modules/${{ github.event.inputs.module }}"
+            terraform init -reconfigure \
+              -backend-config="bucket=tfstate-awsgoat-${{ env.ACCOUNT_ID }}" \
+              -backend-config="key=${{ github.event.inputs.module }}/terraform.tfstate" \
+              -backend-config="region=${{ env.AWS_REGION }}"
+
 
       - uses: actions/setup-python@v5
         with:
