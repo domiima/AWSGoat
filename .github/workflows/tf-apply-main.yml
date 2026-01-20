@@ -65,7 +65,6 @@ jobs:
           set -e
           TABLE="terraform-locks"
           REGION="us-east-1"
-
           if aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" >/dev/null 2>&1; then
             echo "DynamoDB table '$TABLE' already exists."
           else
@@ -95,6 +94,7 @@ jobs:
         working-directory: modules/${{ github.event.inputs.module }}
         run: terraform validate
 
+      # ✅ AUTO-IMPORT risorse già esistenti + fix route table association/subnet
       - name: Auto-import existing AWS resources (idempotent)
         working-directory: modules/${{ github.event.inputs.module }}
         shell: bash
@@ -115,58 +115,28 @@ jobs:
             fi
           }
 
-          # ---------------- IAM ROLES ----------------
+          # -------- IAM Roles --------
           if aws iam get-role --role-name "blog_app_lambda" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.blog_app_lambda" "blog_app_lambda"
           fi
-
           if aws iam get-role --role-name "blog_app_lambda_data" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.blog_app_lambda_python" "blog_app_lambda_data"
           fi
-
           if aws iam get-role --role-name "AWS_GOAT_ROLE" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.goat_role" "AWS_GOAT_ROLE"
           fi
 
-          # ---------------- IAM INSTANCE PROFILE ----------------
-          if aws iam get-instance-profile --instance-profile-name "AWS_GOAT_ec2_profile" >/dev/null 2>&1; then
-            tf_import_if_missing "aws_iam_instance_profile.goat_iam_profile" "AWS_GOAT_ec2_profile"
-          fi
-
-          # ---------------- IAM POLICIES ----------------
+          # -------- IAM Policy --------
           POLICY_ARN="$(aws iam list-policies --scope Local --query "Policies[?PolicyName=='lambda-data-policies'].Arn | [0]" --output text)"
           if [ "$POLICY_ARN" != "None" ] && [ -n "$POLICY_ARN" ]; then
             tf_import_if_missing "aws_iam_policy.lambda_data_policies" "$POLICY_ARN"
           fi
-
           POLICY2_ARN="$(aws iam list-policies --scope Local --query "Policies[?PolicyName=='dev-ec2-lambda-policies'].Arn | [0]" --output text)"
           if [ "$POLICY2_ARN" != "None" ] && [ -n "$POLICY2_ARN" ]; then
             tf_import_if_missing "aws_iam_policy.goat_inline_policy_2" "$POLICY2_ARN"
           fi
 
-          # ---------------- LAMBDA FUNCTIONS ----------------
-          if aws lambda get-function --function-name "blog-application-data" >/dev/null 2>&1; then
-            tf_import_if_missing "aws_lambda_function.lambda_ba_data" "blog-application-data"
-          fi
-
-          if aws lambda get-function --function-name "blog-application" >/dev/null 2>&1; then
-            tf_import_if_missing "aws_lambda_function.react_lambda_app" "blog-application"
-          fi
-
-          # ---------------- LAMBDA PERMISSIONS ----------------
-          if aws lambda get-policy --function-name "blog-application" >/dev/null 2>&1; then
-            if aws lambda get-policy --function-name "blog-application" --query 'Policy' --output text | grep -q '"Sid":"AllowAPIGatewayInvoke"'; then
-              tf_import_if_missing "aws_lambda_permission.apigw_ba" "blog-application/AllowAPIGatewayInvoke"
-            fi
-          fi
-
-          if aws lambda get-policy --function-name "blog-application-data" >/dev/null 2>&1; then
-            if aws lambda get-policy --function-name "blog-application-data" --query 'Policy' --output text | grep -q '"Sid":"AllowAPIGatewayInvoke"'; then
-              tf_import_if_missing "aws_lambda_permission.apigw_ba_python" "blog-application-data/AllowAPIGatewayInvoke"
-            fi
-          fi
-
-          # ---------------- S3 BUCKETS ----------------
+          # -------- S3 Buckets --------
           PROD_BUCKET="production-blog-awsgoat-bucket-${ACCOUNT_ID}"
           DEV_BUCKET="dev-blog-awsgoat-bucket-${ACCOUNT_ID}"
           TEMP_BUCKET="ec2-temp-bucket-${ACCOUNT_ID}"
@@ -181,7 +151,7 @@ jobs:
             tf_import_if_missing "aws_s3_bucket.bucket_temp" "$TEMP_BUCKET"
           fi
 
-          # ---------------- DYNAMODB TABLES ----------------
+          # -------- DynamoDB Tables --------
           if aws dynamodb describe-table --table-name "blog-users" >/dev/null 2>&1; then
             tf_import_if_missing "aws_dynamodb_table.users_table" "blog-users"
           fi
@@ -189,57 +159,35 @@ jobs:
             tf_import_if_missing "aws_dynamodb_table.posts_table" "blog-posts"
           fi
 
-          # ---------------- NETWORK (VPC/SUBNET/IGW/SG/RT) ----------------
-          # 1) VPC: prendiamo prima quella col tag Name=AWS_GOAT_VPC
-          GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=AWS_GOAT_VPC --query "Vpcs[0].VpcId" --output text)"
-          if [ "$GOAT_VPC_ID" = "None" ] || [ -z "$GOAT_VPC_ID" ]; then
-            GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=cidr,Values=192.168.0.0/16 --query "Vpcs[0].VpcId" --output text)"
-          fi
-          if [ "$GOAT_VPC_ID" = "None" ] || [ -z "$GOAT_VPC_ID" ]; then
-            GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)"
-          fi
-          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
-            tf_import_if_missing "aws_vpc.goat_vpc" "$GOAT_VPC_ID"
-          fi
-          echo "GOAT_VPC_ID=$GOAT_VPC_ID"
-
-          # 2) Internet Gateway: importiamo quello ATTACCATO alla VPC (così non prova a crearne uno e non sfora la quota)
-          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
-            IGW_ID="$(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values=$GOAT_VPC_ID --query "InternetGateways[0].InternetGatewayId" --output text)"
-            if [ "$IGW_ID" != "None" ] && [ -n "$IGW_ID" ]; then
-              tf_import_if_missing "aws_internet_gateway.goat_gw" "$IGW_ID"
+          # -------- VPC fallback (import Default VPC) --------
+          DEFAULT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)"
+          if [ "$DEFAULT_VPC_ID" != "None" ] && [ -n "$DEFAULT_VPC_ID" ]; then
+            if ! terraform state show "aws_vpc.goat_vpc" >/dev/null 2>&1; then
+              echo "IMPORT (VPC fallback): aws_vpc.goat_vpc <= $DEFAULT_VPC_ID"
+              terraform import -input=false "aws_vpc.goat_vpc" "$DEFAULT_VPC_ID" || true
             fi
           fi
 
-          # 3) Subnet: importiamo quella che già usa 192.168.0.0/24 nella VPC
-          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
-            SUBNET_ID="$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$GOAT_VPC_ID Name=cidr-block,Values=192.168.0.0/24 --query "Subnets[0].SubnetId" --output text)"
+          # -------- FIX: import subnet + route table association if they already exist --------
+          # Prendiamo l'id della VPC che Terraform userà (quella in state)
+          VPC_ID="$(terraform state show -no-color aws_vpc.goat_vpc 2>/dev/null | awk -F' = ' '/^id =/ {print $2}' | tr -d '"')"
+          if [ -n "${VPC_ID:-}" ]; then
+            echo "VPC_ID(from state)=$VPC_ID"
+
+            # Se esiste una subnet con CIDR 192.168.0.0/24 in quella VPC, importiamola
+            SUBNET_ID="$(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=cidr-block,Values=192.168.0.0/24" \
+              --query "Subnets[0].SubnetId" --output text)"
             if [ "$SUBNET_ID" != "None" ] && [ -n "$SUBNET_ID" ]; then
               tf_import_if_missing "aws_subnet.goat_subnet" "$SUBNET_ID"
-            fi
-          fi
 
-          # 4) Security Group: importiamo quello già esistente con name AWS_GOAT_sg nella VPC
-          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
-            SG_ID="$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=$GOAT_VPC_ID Name=group-name,Values=AWS_GOAT_sg --query "SecurityGroups[0].GroupId" --output text)"
-            if [ "$SG_ID" != "None" ] && [ -n "$SG_ID" ]; then
-              tf_import_if_missing "aws_security_group.goat_sg" "$SG_ID"
-            fi
-          fi
-
-          # 5) Route table: importiamo quella che ha la route 0.0.0.0/0 verso IGW
-          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
-            RT_ID="$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$GOAT_VPC_ID --query "RouteTables[?Routes[?DestinationCidrBlock=='0.0.0.0/0' && GatewayId!=null]][0].RouteTableId" --output text)"
-            if [ "$RT_ID" != "None" ] && [ -n "$RT_ID" ]; then
-              tf_import_if_missing "aws_route_table.goat_rt" "$RT_ID"
-            fi
-          fi
-
-          # 6) Route table association: importiamo l’associazione della subnet alla route table (se esiste)
-          if [ "${SUBNET_ID:-}" != "" ] && [ "${SUBNET_ID:-}" != "None" ]; then
-            ASSOC_ID="$(aws ec2 describe-route-tables --filters Name=association.subnet-id,Values=$SUBNET_ID --query "RouteTables[0].Associations[0].RouteTableAssociationId" --output text)"
-            if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
-              tf_import_if_missing "aws_route_table_association.goat_public_rta" "$ASSOC_ID"
+              # Se la subnet è già associata a una route table, importiamo l'associazione per evitare AlreadyAssociated
+              ASSOC_ID="$(aws ec2 describe-route-tables \
+                --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
+                --query "RouteTables[0].Associations[0].RouteTableAssociationId" --output text)"
+              if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
+                tf_import_if_missing "aws_route_table_association.goat_public_rta" "$ASSOC_ID"
+              fi
             fi
           fi
 
