@@ -79,3 +79,9 @@ jobs:
     - name: Terraform Apply
       run: |
         cd modules/${{ github.event.inputs.module }}
+
+    - name: Application URL (raw)
+        run: |
+          cd modules/${{ github.event.inputs.module }}
+          terraform output -raw ad_Target_URL
+
