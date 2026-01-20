@@ -106,7 +106,6 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           echo "ACCOUNT_ID=$ACCOUNT_ID"
 
-          # Helper: importa solo se la risorsa non è già nello state
           tf_import_if_missing () {
             local addr="$1"
             local id="$2"
@@ -118,40 +117,48 @@ jobs:
             fi
           }
 
-          # -------- IAM Roles --------
-          # blog_app_lambda
+          # ---------------- IAM ROLES ----------------
           if aws iam get-role --role-name "blog_app_lambda" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.blog_app_lambda" "blog_app_lambda"
           fi
 
-          # blog_app_lambda_data (nel tuo TF si chiama aws_iam_role.blog_app_lambda_python)
           if aws iam get-role --role-name "blog_app_lambda_data" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.blog_app_lambda_python" "blog_app_lambda_data"
           fi
 
-          # AWS_GOAT_ROLE
           if aws iam get-role --role-name "AWS_GOAT_ROLE" >/dev/null 2>&1; then
             tf_import_if_missing "aws_iam_role.goat_role" "AWS_GOAT_ROLE"
           fi
 
-          # -------- IAM Policy --------
-          # lambda-data-policies (ARN serve per import)
+          # ---------------- IAM INSTANCE PROFILE ----------------
+          if aws iam get-instance-profile --instance-profile-name "AWS_GOAT_ec2_profile" >/dev/null 2>&1; then
+            tf_import_if_missing "aws_iam_instance_profile.goat_iam_profile" "AWS_GOAT_ec2_profile"
+          fi
+
+          # ---------------- IAM POLICIES ----------------
           POLICY_ARN="$(aws iam list-policies --scope Local --query "Policies[?PolicyName=='lambda-data-policies'].Arn | [0]" --output text)"
           if [ "$POLICY_ARN" != "None" ] && [ -n "$POLICY_ARN" ]; then
             tf_import_if_missing "aws_iam_policy.lambda_data_policies" "$POLICY_ARN"
           fi
 
-          # dev-ec2-lambda-policies (anche questa è una policy custom nel tuo TF)
           POLICY2_ARN="$(aws iam list-policies --scope Local --query "Policies[?PolicyName=='dev-ec2-lambda-policies'].Arn | [0]" --output text)"
           if [ "$POLICY2_ARN" != "None" ] && [ -n "$POLICY2_ARN" ]; then
             tf_import_if_missing "aws_iam_policy.goat_inline_policy_2" "$POLICY2_ARN"
           fi
 
-          # -------- S3 Buckets --------
+          # ---------------- LAMBDA FUNCTIONS ----------------
+          if aws lambda get-function --function-name "blog-application-data" >/dev/null 2>&1; then
+            tf_import_if_missing "aws_lambda_function.lambda_ba_data" "blog-application-data"
+          fi
+
+          if aws lambda get-function --function-name "blog-application" >/dev/null 2>&1; then
+            tf_import_if_missing "aws_lambda_function.react_lambda_app" "blog-application"
+          fi
+
+          # ---------------- S3 BUCKETS ----------------
           PROD_BUCKET="production-blog-awsgoat-bucket-${ACCOUNT_ID}"
           DEV_BUCKET="dev-blog-awsgoat-bucket-${ACCOUNT_ID}"
           TEMP_BUCKET="ec2-temp-bucket-${ACCOUNT_ID}"
-          STATE_BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
 
           if aws s3api head-bucket --bucket "$PROD_BUCKET" >/dev/null 2>&1; then
             tf_import_if_missing "aws_s3_bucket.bucket_upload" "$PROD_BUCKET"
@@ -163,7 +170,7 @@ jobs:
             tf_import_if_missing "aws_s3_bucket.bucket_temp" "$TEMP_BUCKET"
           fi
 
-          # -------- DynamoDB Tables --------
+          # ---------------- DYNAMODB TABLES ----------------
           if aws dynamodb describe-table --table-name "blog-users" >/dev/null 2>&1; then
             tf_import_if_missing "aws_dynamodb_table.users_table" "blog-users"
           fi
@@ -171,16 +178,17 @@ jobs:
             tf_import_if_missing "aws_dynamodb_table.posts_table" "blog-posts"
           fi
 
-          # -------- VPC LIMIT FIX (fallback) --------
-          # Se hai raggiunto il limite VPC, evita di crearne uno nuovo importando il Default VPC.
-          # Importiamo la risorsa aws_vpc.goat_vpc col Default VPC ID.
+          # ---------------- VPC LIMIT FIX (FORZATO) ----------------
           DEFAULT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)"
           if [ "$DEFAULT_VPC_ID" != "None" ] && [ -n "$DEFAULT_VPC_ID" ]; then
-            # Se nel state non c'è ancora il VPC, importiamo il default: così non tenta CreateVpc.
             if ! terraform state show "aws_vpc.goat_vpc" >/dev/null 2>&1; then
-              echo "IMPORT (VPC fallback): aws_vpc.goat_vpc <= $DEFAULT_VPC_ID"
+              echo "IMPORT (VPC forced fallback): aws_vpc.goat_vpc <= $DEFAULT_VPC_ID"
               terraform import -input=false "aws_vpc.goat_vpc" "$DEFAULT_VPC_ID" || true
+            else
+              echo "OK: aws_vpc.goat_vpc already in state"
             fi
+          else
+            echo "WARNING: No default VPC found in region ${AWS_REGION}"
           fi
 
           echo "Auto-import completed."
