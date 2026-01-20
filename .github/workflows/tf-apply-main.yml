@@ -153,8 +153,7 @@ jobs:
             tf_import_if_missing "aws_lambda_function.react_lambda_app" "blog-application"
           fi
 
-          # ---------------- LAMBDA PERMISSIONS (FIX 409 statement_id already exists) ----------------
-          # Importiamo le permission già presenti invece di crearle.
+          # ---------------- LAMBDA PERMISSIONS ----------------
           if aws lambda get-policy --function-name "blog-application" >/dev/null 2>&1; then
             if aws lambda get-policy --function-name "blog-application" --query 'Policy' --output text | grep -q '"Sid":"AllowAPIGatewayInvoke"'; then
               tf_import_if_missing "aws_lambda_permission.apigw_ba" "blog-application/AllowAPIGatewayInvoke"
@@ -190,18 +189,57 @@ jobs:
             tf_import_if_missing "aws_dynamodb_table.posts_table" "blog-posts"
           fi
 
-          # ---------------- VPC LIMIT FIX (IMPORTA LA TUA VPC ESISTENTE, NON IL DEFAULT A CASO) ----------------
-          # Proviamo prima ad importare la VPC già esistente con tag Name=AWS_GOAT_VPC (quella creata da deploy precedenti).
-          EXISTING_GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=AWS_GOAT_VPC --query "Vpcs[0].VpcId" --output text)"
-          if [ "$EXISTING_GOAT_VPC_ID" != "None" ] && [ -n "$EXISTING_GOAT_VPC_ID" ]; then
-            tf_import_if_missing "aws_vpc.goat_vpc" "$EXISTING_GOAT_VPC_ID"
-          else
-            # fallback: default vpc
-            DEFAULT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)"
-            if [ "$DEFAULT_VPC_ID" != "None" ] && [ -n "$DEFAULT_VPC_ID" ]; then
-              tf_import_if_missing "aws_vpc.goat_vpc" "$DEFAULT_VPC_ID"
-            else
-              echo "WARNING: No VPC found to import in region ${AWS_REGION}"
+          # ---------------- NETWORK (VPC/SUBNET/IGW/SG/RT) ----------------
+          # 1) VPC: prendiamo prima quella col tag Name=AWS_GOAT_VPC
+          GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=AWS_GOAT_VPC --query "Vpcs[0].VpcId" --output text)"
+          if [ "$GOAT_VPC_ID" = "None" ] || [ -z "$GOAT_VPC_ID" ]; then
+            GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=cidr,Values=192.168.0.0/16 --query "Vpcs[0].VpcId" --output text)"
+          fi
+          if [ "$GOAT_VPC_ID" = "None" ] || [ -z "$GOAT_VPC_ID" ]; then
+            GOAT_VPC_ID="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)"
+          fi
+          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
+            tf_import_if_missing "aws_vpc.goat_vpc" "$GOAT_VPC_ID"
+          fi
+          echo "GOAT_VPC_ID=$GOAT_VPC_ID"
+
+          # 2) Internet Gateway: importiamo quello ATTACCATO alla VPC (così non prova a crearne uno e non sfora la quota)
+          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
+            IGW_ID="$(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values=$GOAT_VPC_ID --query "InternetGateways[0].InternetGatewayId" --output text)"
+            if [ "$IGW_ID" != "None" ] && [ -n "$IGW_ID" ]; then
+              tf_import_if_missing "aws_internet_gateway.goat_gw" "$IGW_ID"
+            fi
+          fi
+
+          # 3) Subnet: importiamo quella che già usa 192.168.0.0/24 nella VPC
+          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
+            SUBNET_ID="$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$GOAT_VPC_ID Name=cidr-block,Values=192.168.0.0/24 --query "Subnets[0].SubnetId" --output text)"
+            if [ "$SUBNET_ID" != "None" ] && [ -n "$SUBNET_ID" ]; then
+              tf_import_if_missing "aws_subnet.goat_subnet" "$SUBNET_ID"
+            fi
+          fi
+
+          # 4) Security Group: importiamo quello già esistente con name AWS_GOAT_sg nella VPC
+          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
+            SG_ID="$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=$GOAT_VPC_ID Name=group-name,Values=AWS_GOAT_sg --query "SecurityGroups[0].GroupId" --output text)"
+            if [ "$SG_ID" != "None" ] && [ -n "$SG_ID" ]; then
+              tf_import_if_missing "aws_security_group.goat_sg" "$SG_ID"
+            fi
+          fi
+
+          # 5) Route table: importiamo quella che ha la route 0.0.0.0/0 verso IGW
+          if [ "$GOAT_VPC_ID" != "None" ] && [ -n "$GOAT_VPC_ID" ]; then
+            RT_ID="$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$GOAT_VPC_ID --query "RouteTables[?Routes[?DestinationCidrBlock=='0.0.0.0/0' && GatewayId!=null]][0].RouteTableId" --output text)"
+            if [ "$RT_ID" != "None" ] && [ -n "$RT_ID" ]; then
+              tf_import_if_missing "aws_route_table.goat_rt" "$RT_ID"
+            fi
+          fi
+
+          # 6) Route table association: importiamo l’associazione della subnet alla route table (se esiste)
+          if [ "${SUBNET_ID:-}" != "" ] && [ "${SUBNET_ID:-}" != "None" ]; then
+            ASSOC_ID="$(aws ec2 describe-route-tables --filters Name=association.subnet-id,Values=$SUBNET_ID --query "RouteTables[0].Associations[0].RouteTableAssociationId" --output text)"
+            if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
+              tf_import_if_missing "aws_route_table_association.goat_public_rta" "$ASSOC_ID"
             fi
           fi
 
