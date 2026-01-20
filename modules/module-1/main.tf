@@ -141,7 +141,7 @@ resource "aws_api_gateway_integration_response" "endpoint" {
 }
 
 resource "aws_lambda_permission" "apigw_ba" {
-  statement_id  = "AllowAPIGatewayInvokeReact"
+  statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.react_lambda_app.function_name
   principal     = "apigateway.amazonaws.com"
@@ -3160,7 +3160,7 @@ resource "aws_iam_policy" "lambda_data_policies" {
 
 
 resource "aws_lambda_permission" "apigw_ba_python" {
-  statement_id  = "AllowAPIGatewayInvokeData"
+  statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.lambda_ba_data.function_name
   principal     = "apigateway.amazonaws.com"
@@ -3463,8 +3463,7 @@ resource "aws_route_table_association" "goat_public_rta" {
   subnet_id      = aws_subnet.goat_subnet.id
   route_table_id = aws_route_table.goat_rt.id
 }
-  replace_existing_association = true
-}
+
 resource "aws_security_group" "goat_sg" {
   name        = "AWS_GOAT_sg"
   description = "AWS_GOAT_sg"
